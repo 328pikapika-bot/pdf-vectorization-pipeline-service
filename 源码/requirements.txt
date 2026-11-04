@@ -1,0 +1,9 @@
+pymilvus>=2.4.0
+langchain-text-splitters>=0.2.0
+pymupdf4llm>=0.0.17
+PyMuPDF>=1.24.0
+tqdm
+pyyaml
+rich
+requests
+pymongo>=4.6.0

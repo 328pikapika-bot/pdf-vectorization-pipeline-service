@@ -1,0 +1,145 @@
+name: agri-breeding-28fields-transfer-v2
+
+services:
+  credentials:
+    image: alpine:3.20
+    volumes:
+      - credentials:/secrets
+    command:
+      - sh
+      - -ec
+      - |
+        if [ ! -s /secrets/minio-secret ]; then
+          umask 077
+          od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > /secrets/minio-secret.tmp
+          mv /secrets/minio-secret.tmp /secrets/minio-secret
+        fi
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.25
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes:
+      - etcd-data:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    depends_on:
+      credentials:
+        condition: service_completed_successfully
+    volumes:
+      - minio-data:/data
+      - credentials:/secrets:ro
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        export MINIO_ROOT_USER=agri_migration_admin
+        export MINIO_ROOT_PASSWORD="$(cat /secrets/minio-secret)"
+        exec minio server /data --console-address :9001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  init-storage:
+    image: agri-breeding-restore:v2
+    build:
+      context: ./工具及配置模板
+      dockerfile: Dockerfile.restore
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./:/package:ro
+      - credentials:/secrets:ro
+    command: ["python3", "/package/工具及配置模板/restore_auto.py", "init-storage"]
+
+  milvus:
+    image: milvusdb/milvus:v2.6.9
+    restart: unless-stopped
+    depends_on:
+      etcd:
+        condition: service_healthy
+      init-storage:
+        condition: service_completed_successfully
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MQ_TYPE: rocksmq
+    volumes:
+      - milvus-data:/var/lib/milvus
+      - credentials:/secrets:ro
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        export MINIO_ACCESS_KEY_ID=agri_migration_admin
+        export MINIO_SECRET_ACCESS_KEY="REDACTED"
+        cat > /milvus/configs/user.yaml <<EOF
+        proxy:
+          maxVectorFieldNum: 10
+          maxFieldNum: 200
+        minio:
+          address: minio:9000
+          accessKeyID: agri_migration_admin
+          secretAccessKey: REDACTED
+          bucketName: a-bucket
+          rootPath: files
+        EOF
+        exec milvus run standalone
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 20s
+      start_period: 180s
+      timeout: 20s
+      retries: 10
+    ports:
+      - "${AGRI_MILVUS_PORT:-19534}:19530"
+
+  attu:
+    image: zilliz/attu:v2.6.5
+    restart: unless-stopped
+    depends_on:
+      milvus:
+        condition: service_healthy
+    environment:
+      MILVUS_URL: milvus:19530
+    ports:
+      - "${AGRI_ATTU_PORT:-18003}:3000"
+
+  restore:
+    image: agri-breeding-restore:v2
+    build:
+      context: ./工具及配置模板
+      dockerfile: Dockerfile.restore
+    depends_on:
+      milvus:
+        condition: service_healthy
+      attu:
+        condition: service_started
+    volumes:
+      - ./:/package:ro
+      - credentials:/secrets:ro
+    working_dir: /work
+    command: ["python3", "/package/工具及配置模板/restore_auto.py", "migrate"]
+
+volumes:
+  credentials:
+  etcd-data:
+  minio-data:
+  milvus-data:

@@ -1,0 +1,51 @@
+# ============================================================
+# PDF Pipeline 配置文件
+# ============================================================
+
+# --- MongoDB（状态追踪）---
+mongodb:
+  uri: "mongodb://127.0.0.1:27017/admin?authSource=admin"
+  database: "pdf_pipeline"
+
+# --- Milvus（向量库）---
+milvus:
+  host: "127.0.0.1"
+  port: 19534
+  database: "agri_pdf_memories"
+  collection: "agri_breeding_pdf_chunk"
+
+# --- 嵌入 API ---
+embedding:
+  api_url: "http://127.0.0.1:16703/v1/embeddings"
+  model_name: "qwen3-embed"
+  dimension: 2560
+  batch_size: 32
+
+# --- 文本分块（章节内语义切分）---
+chunking:
+  target_chars: 1200
+  min_chars: 300
+  max_chars: 1500
+  semantic_window_chars: 200
+  overlap_ratio: 0.15
+
+# --- 路径 ---
+paths:
+  pdf_source_dir: "../../农科PDF测试数据"
+  md_output_dir: "../../test_output"
+
+# --- 性能 ---
+performance:
+  pdf_workers: 4          # PDF 解析并发数 (0=CPU核数)
+
+# --- 排除标题 ---
+exclude_headers:
+  - "References"
+  - "REFERENCES"
+  - "Supplementary Materials"
+  - "Supplementary data"
+  - "Acknowledgements"
+  - "ACKNOWLEDGMENTS"
+  - "Funding"
+  - "Figure legends"
+  - "Author contributions"
